@@ -1,92 +1,14 @@
 """Module containing strategies to assign tutors to students
 """
+
 import copy
 import collections
 import warnings
 import numpy as np
+from ortools.graph import pywrapgraph
 #import pdb; pdb.set_trace()
 
-# This class represents a directed graph using adjacency matrix representation
-class Graph:
- 
-    def __init__(self,graph):
-        self.graph = graph # residual graph
-        self.ROW = len(graph)
- 
-    def BFS(self,s, t, parent):
-        '''Returns true if there is a path from source 's' to sink 't' in
-        residual graph. Also fills parent[] to store the path '''
 
-        # Mark all the vertices as not visited
-        visited = [False] * (self.ROW)
-       
-        # Create a queue for BFS
-        queue = collections.deque()
-        
-        # Mark the source node as visited and enqueue it
-        queue.append(s)
-        visited[s] = True
-        
-        # Standard BFS Loop
-        while queue:
-            u = queue.popleft()
-        
-            # Get all adjacent vertices's of the dequeued vertex u
-            # If a adjacent has not been visited, then mark it
-            # visited and enqueue it
-            for ind, val in enumerate(self.graph[u]):
-                if visited[ind] == False and val > 0:
-                    queue.append(ind)
-                    visited[ind] = True
-                    parent[ind] = u
-
-        # If we reached sink in BFS starting from source, then return
-        # true, else false
-        return visited[t]
-            
-    # Returns the maximum flow from s to t in the given graph
-    def EdmondsKarp(self, source, sink):
-        # network capacity
-        capacity = copy.deepcopy(self.graph)
-       
-        # This array is filled by BFS and to store path
-        parent = [-1] * (self.ROW)
-
-        max_flow = 0 # There is no flow initially
-       
-        # Augment the flow while there is path from source to sink
-        while self.BFS(source, sink, parent):
-
-            # Find minimum residual capacity of the edges along the
-            # path filled by BFS. Or we can say find the maximum flow
-            # through the path found.
-            path_flow = float("Inf")
-            s = sink
-            while s != source:
-                path_flow = min(path_flow, self.graph[parent[s]][s])
-                s = parent[s]
-
-            # Add path flow to overall flow
-            max_flow += path_flow
-
-            # update residual capacities of the edges and reverse edges
-            # along the path
-            v = sink
-            while v != source:
-                u = parent[v]
-                self.graph[u][v] -= path_flow
-                self.graph[v][u] += path_flow
-                v = parent[v]
-          
-        flow = np.array([[0. for ii in range(self.ROW)] for ii in range(self.ROW)])
-        for i1 in range(self.ROW):
-            for i2 in range(self.ROW):
-                flow[i1][i2] = np.max([capacity[i1][i2] - self.graph[i1][i2], 0])
- 
-        return max_flow, flow
-
-
-  
 def generateAffinity(S, T, n_subjects = 5, n_different_values = None):
 
     student_interests = np.zeros((S,n_subjects))
@@ -125,41 +47,11 @@ def check_input_consistency(S,T,n_students_per_tutor,n_subjects):
 
 
 
-def MaxFlow_FeasibilityProblem(S, T, n_students_per_tutor, Affinity):
-   
-    # compute the max-flow on the modified graph
-    Adj = Affinity>0
-    A = np.zeros((S+T+2,S+T+2))
-    source = S+T
-    destination = S+T+1
-    A[S:S+T,:S] = Adj
-    A[:S,destination] = 1
-    A[source,S:S+T] = n_students_per_tutor.T
 
-    G = Graph(A)
-    max_flow, flow = G.EdmondsKarp(source,destination)
-   
-    # compute the tutor-student resulting allocation
-    allocation = flow[S:S+T,:S].astype(int)
-   
-    # students without a tutor
-    unassigned_students = np.where(np.sum(allocation,axis=0)==0)[0]
-   
-    # minimum achieved affinity
-    tmp = allocation * Affinity
-    min_affinity = np.min(tmp[tmp>0])
-    feasible_flag = (len(unassigned_students)==0)
-    tutor_student_assignment = np.where(tmp==min_affinity)
-   
-    #import pdb; pdb.set_trace()
-   
-    return feasible_flag, unassigned_students, min_affinity, tutor_student_assignment
-
-
-
-
-def dichotomySearchMaxMin(S, T, n_students_per_tutor, Affinity, low_val=0):
-   
+def dichotomySearchMaxMin(n_students_per_tutor, Affinity, low_val=0, refine_flag = True):
+    
+    T, S = Affinity.shape
+    
     affinity_sorted = np.unique(np.reshape(Affinity[Affinity > 0],(1,-1)))
     #affinity_sorted = np.sort(affinity_sorted)
     upp_ind = len(affinity_sorted) - 1
@@ -167,7 +59,6 @@ def dichotomySearchMaxMin(S, T, n_students_per_tutor, Affinity, low_val=0):
     if low_val == 0:
         low_ind = 0
     else:
-        #import pdb; pdb.set_trace()
         ii = np.where(affinity_sorted > low_val)[0]
         if len(ii) == 0:
             low_ind = 0
@@ -175,23 +66,20 @@ def dichotomySearchMaxMin(S, T, n_students_per_tutor, Affinity, low_val=0):
             low_ind = ii[0] - 1
     
     # check whether lower problem is feasible 
-    feasible_flag, unassigned_students, min_affinity_tmp, tutor_student_assignment_tmp = \
-        MaxFlow_FeasibilityProblem(S, T, n_students_per_tutor, Affinity)
-    
-    if feasible_flag==False:
+    feasible_flag, unassigned_students, min_affinity_tmp, tutor_student_assignment_tmp, tutor_student_assignment_tmp_1 = \
+        MaxFlow_FeasibilityProblem(n_students_per_tutor, Affinity, affinity_sorted[0])
+        
+    if feasible_flag==False:  
         return feasible_flag, unassigned_students, min_affinity_tmp, tutor_student_assignment_tmp
     else:
         min_affinity = min_affinity_tmp
         tutor_student_assignment = tutor_student_assignment_tmp
-    
+        tutor_student_assignment_1 = tutor_student_assignment_tmp_1
+        
     # check whether upper problem is feasible (normally it should be unfeasible) 
-    Affinity_tmp = np.zeros(Affinity.shape)
-    Affinity_tmp[:] = Affinity
-    Affinity_tmp[(Affinity_tmp<affinity_sorted[upp_ind]).reshape(Affinity.shape)] = 0
-
-    feasible_flag, unassigned_students_tmp, min_affinity_tmp, tutor_student_assignment_tmp = \
-        MaxFlow_FeasibilityProblem(S, T, n_students_per_tutor, Affinity_tmp)
-    
+    feasible_flag, unassigned_students_tmp, min_affinity_tmp, tutor_student_assignment_tmp, tutor_student_assignment_tmp_1 = \
+        MaxFlow_FeasibilityProblem(n_students_per_tutor, Affinity, affinity_sorted[upp_ind])
+        
     if feasible_flag:
         return feasible_flag, [], min_affinity_tmp, tutor_student_assignment_tmp
 
@@ -199,34 +87,34 @@ def dichotomySearchMaxMin(S, T, n_students_per_tutor, Affinity, low_val=0):
     while (upp_ind>low_ind+1):
         
         new_ind = int((low_ind + upp_ind)/2)
-
-        Affinity_tmp = np.zeros(Affinity.shape)
-        Affinity_tmp[:] = Affinity
-        Affinity_tmp[(Affinity_tmp<affinity_sorted[new_ind]).reshape(Affinity.shape)] = 0
-
-        feasible_flag, unassigned_students, min_affinity_tmp, tutor_student_assignment_tmp = \
-            MaxFlow_FeasibilityProblem(S, T, n_students_per_tutor, Affinity_tmp)
+        
+        feasible_flag, unassigned_students, min_affinity_tmp, tutor_student_assignment_tmp, tutor_student_assignment_tmp_1 = \
+        MaxFlow_FeasibilityProblem(n_students_per_tutor, Affinity, affinity_sorted[new_ind])
 
         if feasible_flag:
             low_ind = np.where(affinity_sorted==min_affinity_tmp)[0][0] #new_ind
             min_affinity =  min_affinity_tmp #affinity_sorted[low_ind]
             tutor_student_assignment = tutor_student_assignment_tmp
+            tutor_student_assignment_1 = tutor_student_assignment_tmp_1
         else:
             upp_ind = new_ind
     
     feasible_flag = True
     unassigned_students = []
     
+    if refine_flag & (len(tutor_student_assignment[0])>1):
+        #import pdb; pdb.set_trace()
+        tutor_student_assignment = refine_solution_Transportation(Affinity, n_students_per_tutor, min_affinity)
+    
     
     return feasible_flag, unassigned_students, min_affinity, tutor_student_assignment
 
 
 
-
-def MaxMinStudentTutorAssignment(Affinity, n_students_per_tutor, S=None, T=None):
+def MaxMinStudentTutorAssignment(Affinity, n_students_per_tutor, refine_flag = 1):
     
-    if (S is None) | (T is None):
-        T, S = Affinity.shape
+    T, S = Affinity.shape
+    n_students_per_tutor = np.array(n_students_per_tutor)
     
     S_set0 = np.array(range(S))
     S_set2 = np.array([])
@@ -235,7 +123,7 @@ def MaxMinStudentTutorAssignment(Affinity, n_students_per_tutor, S=None, T=None)
     T_set = np.where(n_students_per_tutor>0)[0] # set of tutors
     n_students_per_tutor = n_students_per_tutor[T_set]
 
-    while (len(T_set)>0):
+    while (len(T_set)>0) & (np.sum(Affinity)>0):
         
         S_set1 = np.setdiff1d(S_set0, S_set2)
         min_affinity = 0
@@ -245,9 +133,10 @@ def MaxMinStudentTutorAssignment(Affinity, n_students_per_tutor, S=None, T=None)
 
             # find the max-min value by dichotomy search
             Affinity_1 = Affinity[T_set][:,S_set1]
+            
             feasible_flag, unassigned_students, min_affinity, tutor_student_assignment = \
-                dichotomySearchMaxMin(len(S_set1), len(T_set), n_students_per_tutor, Affinity_1, min_affinity)
-
+                dichotomySearchMaxMin(n_students_per_tutor, Affinity_1, min_affinity, refine_flag)
+            
             if feasible_flag is False:
                 # update the set of available students
                 S_set2 = np.r_[S_set2, S_set1[unassigned_students]]
@@ -279,4 +168,113 @@ def MaxMinStudentTutorAssignment(Affinity, n_students_per_tutor, S=None, T=None)
                 S_set1 = np.delete(S_set1, tutor_student_assignment[1])
             
     return final_assignment
+
+
+
+def refine_solution_Transportation(Affinity, n_students_per_tutor, min_affinity):
+    
+    T, S = Affinity.shape
+    
+    # build the min-cost transportation problem
+    # nodes and edges
+    ind = np.where(Affinity>=min_affinity)
+    start_nodes = ind[0] # tutors
+    end_nodes = ind[1] + T # students
+
+    # add artificial node to make sum(supplies)=0
+    start_nodes = np.r_[start_nodes, range(T)] 
+    end_nodes = np.r_[end_nodes, [S+T]*T] # students
+
+    n_edges = len(start_nodes)
+
+    # cost vector, capacities and supplies
+    cost_vec = np.zeros(len(ind[0]))
+    cost_vec[Affinity[ind]==min_affinity] = 1
+    cost_vec = np.r_[cost_vec, np.zeros(T)]
+    
+    capacities = [np.max(n_students_per_tutor)] * n_edges
+
+    supplies = np.r_[n_students_per_tutor, [-1] * S, S-np.sum(n_students_per_tutor)]
+
+    # Instantiate a SimpleMinCostFlow solver
+    min_cost_flow = pywrapgraph.SimpleMinCostFlow()
+
+    # Add each arc
+    for i in range(0,len(start_nodes)):
+        min_cost_flow.AddArcWithCapacityAndUnitCost(int(start_nodes[i]), \
+                                int(end_nodes[i]), int(capacities[i]), int(cost_vec[i]))
+
+    # Add node supplies
+    for i in range(0,len(supplies)):
+        min_cost_flow.SetNodeSupply(i, int(supplies[i]))
+    
+    # check that it is feasible
+    if min_cost_flow.Solve() != min_cost_flow.OPTIMAL:
+        print('There was an issue with the min-cost flow input.')
+    
+    keep_it = [False for ii in range(n_edges)]
+    for ii in range(n_edges):
+        keep_it[ii] = (min_cost_flow.Flow(ii)==1) & (min_cost_flow.UnitCost(ii)==1)
+    
+    tutor_student_assignment = [start_nodes[keep_it], end_nodes[keep_it]-T]
+    
+    return tutor_student_assignment
+
+
+
+def MaxFlow_FeasibilityProblem(n_students_per_tutor, Affinity, min_val):
+    
+    T, S = Affinity.shape
+    
+    # build the min-cost transportation problem
+    # nodes and edges
+    ind = np.where(Affinity>=min_val)
+    start_nodes = ind[0] # tutors
+    end_nodes = ind[1] + T # students
+    n_edges_inner = len(start_nodes)
+    
+    # add source [S+T] -> tutors and students -> destination [S+T+1]
+    start_nodes = np.r_[start_nodes, [S+T] * T, T+np.arange(S)]
+    end_nodes = np.r_[end_nodes, range(T), [S+T+1] * S]
+    
+    # capacities
+    capacities = np.r_[np.ones(n_edges_inner), n_students_per_tutor, np.ones(S)]
+    
+    max_flow = pywrapgraph.SimpleMaxFlow()
+    
+    # Add each arc
+    for ii in range(len(start_nodes)):
+        max_flow.AddArcWithCapacity(int(start_nodes[ii]), int(end_nodes[ii]), int(capacities[ii]))
+    
+    if max_flow.Solve(S+T, S+T+1) != max_flow.OPTIMAL:
+        print('There was an issue with the max-flow input.')
+    
+    # compute the tutor-student resulting allocation
+    allocation = np.zeros([T,S], dtype=int)
+    for ii in range(n_edges_inner):
+        allocation[start_nodes[ii], end_nodes[ii]-T] = int(max_flow.Flow(ii))
+    
+    # students without a tutor
+    unassigned_students = np.where(np.sum(allocation,axis=0)==0)[0]
+    feasible_flag = (len(unassigned_students)==0)
+   
+    # minimum achieved affinity
+    tmp = allocation * Affinity
+    if feasible_flag==False:
+        min_affinity = 0
+    else:
+        min_affinity = np.min(tmp[tmp>0])
+    
+    if np.sum(tmp)==0:
+        tutor_student_assignment_low = []
+        tutor_student_assignment_high = []
+    else:
+        if feasible_flag==False:
+            tutor_student_assignment_low = []
+            tutor_student_assignment_high = np.where(tmp>min_affinity)
+        else:
+            tutor_student_assignment_low = np.where(tmp==min_affinity)
+            tutor_student_assignment_high = np.where(tmp>min_affinity)
+   
+    return feasible_flag, unassigned_students, min_affinity, tutor_student_assignment_low, tutor_student_assignment_high
 
