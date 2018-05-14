@@ -9,7 +9,8 @@ from ortools.graph import pywrapgraph
 #import pdb; pdb.set_trace()
 
 
-def generateAffinity(S, T, n_subjects = 5, n_different_values = None):
+
+def generateAffinity(S, T, n_students_per_tutor, n_subjects = 5, n_different_values = None, sparsity=0, do_plot=False):
 
     student_interests = np.zeros((S,n_subjects))
     student_feature = np.random.uniform(low=.5,high=1,size=S)
@@ -33,8 +34,25 @@ def generateAffinity(S, T, n_subjects = 5, n_different_values = None):
         for kk in range(n_different_values):
             Affinity[(Affinity<=(kk+1)*max_val/n_different_values) & \
                     (Affinity>kk*max_val/n_different_values)] = kk + 1
-   
-    return Affinity # T x S
+    
+    #Affinity[Affinity<=truncation] = 0
+    
+    Affinity[np.random.uniform(0,1,size=(T,S))<=sparsity] = 0
+    
+    students_to_keep = np.where(np.sum(Affinity,axis=0)!=0)[0]
+    tutors_to_keep = np.where(np.sum(Affinity,axis=1)!=0)[0]
+    Affinity = Affinity[tutors_to_keep][:,students_to_keep]
+    T, S = Affinity.shape
+    n_students_per_tutor = n_students_per_tutor[tutors_to_keep]
+    
+    if do_plot:
+        import matplotlib.pyplot as plt
+        a = plt.hist(Affinity.reshape(S*T,-1), density=True) #, bins=range(int(np.max(Affinity))))
+        plt.title('PDF of affinity values')
+        #plt.xticks(range(int(np.max(Affinity))))
+        plt.show()
+    
+    return Affinity, n_students_per_tutor, T, S # T x S
 
 
 
@@ -65,9 +83,15 @@ def dichotomySearchMaxMin(n_students_per_tutor, Affinity, low_val=0, refine_flag
         else:
             low_ind = ii[0] - 1
     
-    # check whether lower problem is feasible 
-    feasible_flag, unassigned_students, min_affinity_tmp, tutor_student_assignment_tmp, tutor_student_assignment_tmp_1 = \
-        MaxFlow_FeasibilityProblem(n_students_per_tutor, Affinity, affinity_sorted[0])
+    if len(affinity_sorted)==0:
+        feasible_flag = False
+        unassigned_students = range(S)
+        min_affinity_tmp = 0
+        tutor_student_assignment_tmp = []
+    else:
+        # check whether lower problem is feasible 
+        feasible_flag, unassigned_students, min_affinity_tmp, tutor_student_assignment_tmp, tutor_student_assignment_tmp_1 = \
+            MaxFlow_FeasibilityProblem(n_students_per_tutor, Affinity, affinity_sorted[0])
         
     if feasible_flag==False:  
         return feasible_flag, unassigned_students, min_affinity_tmp, tutor_student_assignment_tmp
@@ -123,7 +147,7 @@ def MaxMinStudentTutorAssignment(Affinity, n_students_per_tutor, refine_flag = 1
     T_set = np.where(n_students_per_tutor>0)[0] # set of tutors
     n_students_per_tutor = n_students_per_tutor[T_set]
 
-    while (len(T_set)>0) & (np.sum(Affinity)>0):
+    while (len(T_set)>0) & (len(S_set2)<S) & (np.sum(Affinity)>0):
         
         S_set1 = np.setdiff1d(S_set0, S_set2)
         min_affinity = 0
@@ -277,4 +301,13 @@ def MaxFlow_FeasibilityProblem(n_students_per_tutor, Affinity, min_val):
             tutor_student_assignment_high = np.where(tmp>min_affinity)
    
     return feasible_flag, unassigned_students, min_affinity, tutor_student_assignment_low, tutor_student_assignment_high
+
+
+def print_assignment(S,final_assignment):
+    print("Iterative Max-Min student-tutor assignment")
+    print("student -> list of (tutor, affinity) assigned to her/him")
+    for ss in range(S):
+        print('   ' + str(ss) + '    -> ' + str(final_assignment[ss]))
+    
+    return 0
 
